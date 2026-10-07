@@ -7,7 +7,7 @@
     <application
         android:allowBackup="false"
         android:label="JARVIS Bridge"
-        android:theme="@style/Theme.AppCompat.Light.NoActionBar">
+        android:theme="@style/Theme.JarvisBridge">
 
         <receiver
             android:name=".CommandReceiver"
