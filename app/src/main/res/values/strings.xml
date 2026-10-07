@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JARVIS Bridge</string>
+    <string name="accessibility_service_description">
+        Allows JARVIS to press WhatsApp's Send button after an explicit voice command.
+    </string>
+</resources>
