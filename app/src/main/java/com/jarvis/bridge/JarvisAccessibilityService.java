@@ -1,290 +1,364 @@
-package com.jarvis.bridge
+package com.jarvis.bridge;
 
-import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
-import android.graphics.Path
-import android.graphics.Rect
-import android.os.Handler
-import android.os.Looper
-import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
-import java.net.HttpURLConnection
-import java.net.URL
-import org.json.JSONObject
+import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.GestureDescription;
+import android.graphics.Path;
+import android.graphics.Rect;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 
-class JarvisAccessibilityService : AccessibilityService() {
+import org.json.JSONObject;
 
-    private val handler = Handler(Looper.getMainLooper())
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
 
-    private var lastClickTime = 0L
+public class JarvisAccessibilityService extends AccessibilityService {
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+    private static final String WHATSAPP_PACKAGE = "com.whatsapp";
 
-        if (event == null) return
+    private volatile long lastAttemptMs = 0L;
 
-        val packageName = event.packageName?.toString() ?: return
-
-        if (packageName != "com.whatsapp") {
-            return
+    @Override
+    public void onAccessibilityEvent(AccessibilityEvent event) {
+        if (event == null) {
+            return;
         }
 
-        if (JarvisRequest.requestId == null) {
-            return
+        CharSequence pkg = event.getPackageName();
+
+        if (pkg == null || !WHATSAPP_PACKAGE.contentEquals(pkg)) {
+            return;
         }
 
-        // Avoid hammering the WhatsApp UI repeatedly.
-        val now = System.currentTimeMillis()
-
-        if (now - lastClickTime < 1000) {
-            return
+        if (!JarvisRequest.isPending()) {
+            return;
         }
 
-        val root = rootInActiveWindow ?: return
+        long now = System.currentTimeMillis();
 
-        val expectedMessage = JarvisRequest.body ?: return
-
-        // Safety check: make sure the message we're about to send
-        // actually appears somewhere in the WhatsApp accessibility tree.
-        if (!containsText(root, expectedMessage)) {
-            return
+        if (now - lastAttemptMs < 700) {
+            return;
         }
 
-        val sendButton = findSendButton(root) ?: return
+        AccessibilityNodeInfo root = getRootInActiveWindow();
 
-        lastClickTime = now
-
-        var clicked = false
-
-        // First try the accessibility click action.
-        if (sendButton.isClickable) {
-            clicked = sendButton.performAction(
-                AccessibilityNodeInfo.ACTION_CLICK
-            )
+        if (root == null) {
+            return;
         }
 
-        // Some Android/WhatsApp versions expose the node but don't
-        // implement ACTION_CLICK correctly. Walk upward to a clickable
-        // parent.
+        String expected = JarvisRequest.body;
+
+        if (expected == null || expected.trim().isEmpty()) {
+            return;
+        }
+
+        /*
+         * Safety check:
+         * Only attempt to press Send if the exact message text
+         * is visible in WhatsApp.
+         */
+        if (!containsExactText(root, expected)) {
+            return;
+        }
+
+        AccessibilityNodeInfo send = findSendButton(root);
+
+        if (send == null) {
+            return;
+        }
+
+        lastAttemptMs = now;
+
+        boolean clicked = clickNodeOrParent(send);
+
         if (!clicked) {
-            var parent = sendButton.parent
+            Rect bounds = new Rect();
+            send.getBoundsInScreen(bounds);
 
-            while (parent != null) {
-
-                if (parent.isClickable) {
-
-                    clicked = parent.performAction(
-                        AccessibilityNodeInfo.ACTION_CLICK
-                    )
-
-                    if (clicked) {
-                        break
-                    }
-                }
-
-                parent = parent.parent
-            }
-        }
-
-        // Final fallback: tap the center of the Send button.
-        if (!clicked) {
-            val bounds = Rect()
-
-            sendButton.getBoundsInScreen(bounds)
-
-            if (!bounds.isEmpty) {
+            if (!bounds.isEmpty()) {
                 clicked = dispatchTap(
-                    bounds.centerX().toFloat(),
-                    bounds.centerY().toFloat()
-                )
+                        bounds.centerX(),
+                        bounds.centerY()
+                );
             }
         }
 
         if (clicked) {
-
-            val requestId = JarvisRequest.requestId ?: return
-
-            val host = JarvisRequest.callbackHost ?: return
-            val port = JarvisRequest.callbackPort
-            val token = JarvisRequest.callbackToken ?: return
+            String requestId = JarvisRequest.requestId;
+            String host = JarvisRequest.callbackHost;
+            int port = JarvisRequest.callbackPort;
+            String token = JarvisRequest.callbackToken;
 
             sendResultAsync(
-                host = host,
-                port = port,
-                token = token,
-                requestId = requestId,
-                status = "sent"
-            )
+                    host,
+                    port,
+                    token,
+                    requestId,
+                    "sent"
+            );
 
-            JarvisRequest.clear()
+            JarvisRequest.clear();
         }
     }
 
-    override fun onInterrupt() {
-    }
+    private boolean clickNodeOrParent(
+            AccessibilityNodeInfo node) {
 
-    private fun findSendButton(
-        node: AccessibilityNodeInfo?
-    ): AccessibilityNodeInfo? {
+        AccessibilityNodeInfo current = node;
 
-        if (node == null) return null
+        while (current != null) {
 
-        val id = node.viewIdResourceName
-            ?.lowercase()
-            ?: ""
+            if (current.isEnabled() && current.isClickable()) {
 
-        val description = node.contentDescription
-            ?.toString()
-            ?.lowercase()
-            ?: ""
+                if (current.performAction(
+                        AccessibilityNodeInfo.ACTION_CLICK)) {
 
-        val text = node.text
-            ?.toString()
-            ?.lowercase()
-            ?: ""
+                    return true;
+                }
+            }
 
-        /*
-         * We intentionally don't rely on one exact WhatsApp resource ID.
-         * WhatsApp can change its UI between releases.
-         */
-
-        val looksLikeSend =
-            id.endsWith(":id/send") ||
-            id.endsWith("/send") ||
-            description == "send" ||
-            description == "send message" ||
-            text == "send"
-
-        if (looksLikeSend && node.isEnabled) {
-            return node
+            current = current.getParent();
         }
 
-        for (i in 0 until node.childCount) {
+        return false;
+    }
 
-            val child = node.getChild(i)
+    private AccessibilityNodeInfo findSendButton(
+            AccessibilityNodeInfo node) {
 
-            val result = findSendButton(child)
+        if (node == null) {
+            return null;
+        }
+
+        String id = safeLower(
+                node.getViewIdResourceName()
+        );
+
+        String description = "";
+
+        if (node.getContentDescription() != null) {
+            description = safeLower(
+                    node.getContentDescription().toString()
+            );
+        }
+
+        String text = "";
+
+        if (node.getText() != null) {
+            text = safeLower(
+                    node.getText().toString()
+            );
+        }
+
+        boolean looksLikeSend =
+                id.endsWith(":id/send")
+                || id.endsWith("/send")
+                || "send".equals(description)
+                || "send message".equals(description)
+                || "send".equals(text);
+
+        if (looksLikeSend && node.isEnabled()) {
+            return node;
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+
+            AccessibilityNodeInfo child =
+                    node.getChild(i);
+
+            AccessibilityNodeInfo result =
+                    findSendButton(child);
 
             if (result != null) {
-                return result
+                return result;
             }
         }
 
-        return null
+        return null;
     }
 
-    private fun containsText(
-        node: AccessibilityNodeInfo?,
-        expected: String
-    ): Boolean {
+    private boolean containsExactText(
+            AccessibilityNodeInfo node,
+            String expected) {
 
-        if (node == null) return false
-
-        val target = expected.trim()
-
-        if (target.isEmpty()) return false
-
-        val nodeText =
-            node.text?.toString() ?: ""
-
-        val nodeDescription =
-            node.contentDescription?.toString() ?: ""
-
-        if (nodeText.contains(target, ignoreCase = false)) {
-            return true
+        if (node == null || expected == null) {
+            return false;
         }
 
-        if (nodeDescription.contains(target, ignoreCase = false)) {
-            return true
+        String target = expected.trim();
+
+        if (target.isEmpty()) {
+            return false;
         }
 
-        for (i in 0 until node.childCount) {
+        CharSequence nodeText = node.getText();
 
-            if (containsText(node.getChild(i), expected)) {
-                return true
+        if (nodeText != null
+                && target.equals(nodeText.toString().trim())) {
+
+            return true;
+        }
+
+        CharSequence description =
+                node.getContentDescription();
+
+        if (description != null
+                && target.equals(description.toString().trim())) {
+
+            return true;
+        }
+
+        for (int i = 0; i < node.getChildCount(); i++) {
+
+            AccessibilityNodeInfo child =
+                    node.getChild(i);
+
+            if (containsExactText(child, expected)) {
+                return true;
             }
         }
 
-        return false
+        return false;
     }
 
-    private fun dispatchTap(
-        x: Float,
-        y: Float
-    ): Boolean {
+    private boolean dispatchTap(
+            float x,
+            float y) {
 
-        val path = Path()
+        Path path = new Path();
 
-        path.moveTo(x, y)
+        path.moveTo(x, y);
 
-        val stroke = GestureDescription.StrokeDescription(
-            path,
-            0,
-            80
-        )
+        GestureDescription.StrokeDescription stroke =
+                new GestureDescription.StrokeDescription(
+                        path,
+                        0,
+                        80
+                );
 
-        val gesture = GestureDescription.Builder()
-            .addStroke(stroke)
-            .build()
+        GestureDescription gesture =
+                new GestureDescription.Builder()
+                        .addStroke(stroke)
+                        .build();
 
         return dispatchGesture(
-            gesture,
-            null,
-            null
-        )
+                gesture,
+                null,
+                null
+        );
     }
 
-    private fun sendResultAsync(
-        host: String,
-        port: Int,
-        token: String,
-        requestId: String,
-        status: String
-    ) {
+    private void sendResultAsync(
+            String host,
+            int port,
+            String token,
+            String requestId,
+            String status) {
 
-        Thread {
+        if (host == null
+                || token == null
+                || requestId == null) {
 
-            try {
+            return;
+        }
 
-                val url = URL(
-                    "http://$host:$port/whatsapp/result"
-                )
+        new Thread(
+                new Runnable() {
 
-                val connection =
-                    url.openConnection() as HttpURLConnection
+                    @Override
+                    public void run() {
 
-                connection.requestMethod = "POST"
+                        HttpURLConnection connection = null;
 
-                connection.connectTimeout = 2000
-                connection.readTimeout = 2000
+                        try {
 
-                connection.doOutput = true
+                            URL url = new URL(
+                                    "http://"
+                                            + host
+                                            + ":"
+                                            + port
+                                            + "/whatsapp/result"
+                            );
 
-                connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json"
-                )
+                            connection =
+                                    (HttpURLConnection)
+                                            url.openConnection();
 
-                val json = JSONObject()
+                            connection.setRequestMethod("POST");
 
-                json.put("token", token)
-                json.put("request_id", requestId)
-                json.put("status", status)
+                            connection.setConnectTimeout(2500);
+                            connection.setReadTimeout(2500);
 
-                val bytes =
-                    json.toString().toByteArray(Charsets.UTF_8)
+                            connection.setDoOutput(true);
 
-                connection.outputStream.use {
-                    it.write(bytes)
-                }
+                            connection.setRequestProperty(
+                                    "Content-Type",
+                                    "application/json"
+                            );
 
-                connection.responseCode
+                            JSONObject json =
+                                    new JSONObject();
 
-                connection.disconnect()
+                            json.put(
+                                    "token",
+                                    token
+                            );
 
-            } catch (_: Exception) {
-                // JARVIS will timeout if the callback cannot be reached.
+                            json.put(
+                                    "request_id",
+                                    requestId
+                            );
+
+                            json.put(
+                                    "status",
+                                    status
+                            );
+
+                            byte[] data =
+                                    json.toString()
+                                            .getBytes(
+                                                    StandardCharsets.UTF_8
+                                            );
+
+                            try (OutputStream output =
+                                         connection.getOutputStream()) {
+
+                                output.write(data);
+                            }
+
+                            connection.getResponseCode();
+
+                        } catch (Exception ignored) {
+
+                            // Callback failure does not crash
+                            // the accessibility service.
+
+                        } finally {
+
+                            if (connection != null) {
+                                connection.disconnect();
+                            }
+                        }
+                    }
+                },
+                "jarvis-result-callback"
+        ).start();
+    }
+
+    private static String safeLower(
+            String value) {
+
+        if (value == null) {
+            return "";
+        }
+
+        return value.toLowerCase();
+    }
+
+    @Override
+    public void onInterrupt() {
+        // Nothing to clean up.
+    }
             }
-
-        }.start()
-    }
-}
