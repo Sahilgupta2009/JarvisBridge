@@ -7,8 +7,22 @@
     <application
         android:allowBackup="false"
         android:label="JARVIS Bridge"
+        android:supportsRtl="true"
         android:theme="@style/Theme.JarvisBridge">
 
+        <!-- Main app screen -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Receives commands from JARVIS / Termux -->
         <receiver
             android:name=".CommandReceiver"
             android:exported="true">
@@ -19,6 +33,7 @@
 
         </receiver>
 
+        <!-- WhatsApp automation service -->
         <service
             android:name=".JarvisAccessibilityService"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
