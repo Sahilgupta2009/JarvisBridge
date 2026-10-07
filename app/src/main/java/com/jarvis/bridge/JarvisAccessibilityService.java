@@ -361,4 +361,4 @@ public class JarvisAccessibilityService extends AccessibilityService {
     public void onInterrupt() {
         // Nothing to clean up.
     }
-            }
+}
