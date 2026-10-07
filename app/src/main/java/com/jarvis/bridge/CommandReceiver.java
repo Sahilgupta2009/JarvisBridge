@@ -1,69 +1,47 @@
-package com.jarvis.bridge
+package com.jarvis.bridge;
 
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
 
-object JarvisRequest {
-    @Volatile
-    var requestId: String? = null
+public class CommandReceiver extends BroadcastReceiver {
 
-    @Volatile
-    var phone: String? = null
+    public static final String ACTION_SEND_WHATSAPP =
+            "com.jarvis.bridge.SEND_WHATSAPP";
 
-    @Volatile
-    var name: String? = null
+    @Override
+    public void onReceive(Context context, Intent intent) {
 
-    @Volatile
-    var body: String? = null
+        if (intent == null) {
+            return;
+        }
 
-    @Volatile
-    var callbackHost: String? = null
-
-    @Volatile
-    var callbackPort: Int = 8765
-
-    @Volatile
-    var callbackToken: String? = null
-
-    fun clear() {
-        requestId = null
-        phone = null
-        name = null
-        body = null
-        callbackHost = null
-        callbackToken = null
-        callbackPort = 8765
-    }
-}
-
-class CommandReceiver : BroadcastReceiver() {
-
-    override fun onReceive(context: Context, intent: Intent) {
-
-        if (intent.action != "com.jarvis.bridge.SEND_WHATSAPP") {
-            return
+        if (!ACTION_SEND_WHATSAPP.equals(intent.getAction())) {
+            return;
         }
 
         JarvisRequest.requestId =
-            intent.getStringExtra("request_id")
+                intent.getStringExtra("request_id");
 
         JarvisRequest.phone =
-            intent.getStringExtra("phone")
+                intent.getStringExtra("phone");
 
         JarvisRequest.name =
-            intent.getStringExtra("name")
+                intent.getStringExtra("name");
 
         JarvisRequest.body =
-            intent.getStringExtra("body")
+                intent.getStringExtra("body");
 
         JarvisRequest.callbackHost =
-            intent.getStringExtra("callback_host")
+                intent.getStringExtra("callback_host");
 
         JarvisRequest.callbackPort =
-            intent.getIntExtra("callback_port", 8765)
+                intent.getIntExtra(
+                        "callback_port",
+                        8765
+                );
 
         JarvisRequest.callbackToken =
-            intent.getStringExtra("callback_token")
+                intent.getStringExtra("callback_token");
     }
 }
