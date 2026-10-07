@@ -2,7 +2,8 @@ package com.jarvis.bridge;
 
 public final class JarvisRequest {
 
-    private JarvisRequest() {}
+    private JarvisRequest() {
+    }
 
     public static volatile String requestId;
     public static volatile String phone;
